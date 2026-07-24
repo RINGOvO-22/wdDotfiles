@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+plugin_root="${ZDOT_PLUGIN_DIR:-$HOME/.zsh}"
+mkdir -p "$plugin_root"
+
+install_plugin() {
+  local name="$1"
+  local url="$2"
+  local revision="$3"
+  local destination="$plugin_root/$name"
+
+  if [[ -e "$destination" && ! -d "$destination/.git" ]]; then
+    printf 'Refusing to replace non-Git path: %s\n' "$destination" >&2
+    return 1
+  fi
+
+  if [[ ! -d "$destination/.git" ]]; then
+    git clone --filter=blob:none "$url" "$destination"
+  fi
+
+  git -C "$destination" fetch --depth 1 origin "$revision"
+  git -C "$destination" checkout --detach "$revision"
+}
+
+install_plugin \
+  zsh-autosuggestions \
+  https://github.com/zsh-users/zsh-autosuggestions.git \
+  85919cd1ffa7d2d5412f6d3fe437ebdbeeec4fc5
+
+install_plugin \
+  zsh-completions \
+  https://github.com/zsh-users/zsh-completions.git \
+  3287c3dd30f79a76f1543d7902502def8be20992
+
+install_plugin \
+  zsh-syntax-highlighting \
+  https://github.com/zsh-users/zsh-syntax-highlighting.git \
+  1d85c692615a25fe2293bdd44b34c217d5d2bf04
