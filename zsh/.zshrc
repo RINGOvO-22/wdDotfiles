@@ -260,3 +260,19 @@ fi
 if [ -f "$HOME/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ]; then
   source "$HOME/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
 fi
+
+# >>> conda initialize >>>
+# !! 本块原由 conda init 生成；conda init 会写回绝对路径，改动后需手动改回 !!
+CONDA_HOME="${CONDA_HOME:-$HOME/miniforge3}"
+if [ -x "$CONDA_HOME/bin/conda" ]; then
+  __conda_setup="$("$CONDA_HOME/bin/conda" 'shell.zsh' 'hook' 2> /dev/null)"
+  if [ $? -eq 0 ]; then
+    eval "$__conda_setup"
+  elif [ -f "$CONDA_HOME/etc/profile.d/conda.sh" ]; then
+    . "$CONDA_HOME/etc/profile.d/conda.sh"
+  else
+    export PATH="$CONDA_HOME/bin:$PATH"
+  fi
+  unset __conda_setup
+fi
+# <<< conda initialize <<<

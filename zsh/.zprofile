@@ -1,4 +1,3 @@
-
 # >>> Codex installer >>>
-export PATH="/Users/daijunhao/.local/bin:$PATH"
+export PATH="$HOME/.local/bin:$PATH"
 # <<< Codex installer <<<
