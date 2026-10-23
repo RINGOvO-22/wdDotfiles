@@ -10,7 +10,6 @@ PROXY_HOST="${PROXY_HOST:-127.0.0.1}"
 PROXY_PORT="${PROXY_PORT:-7890}"
 PROXY_NETWORK_SERVICE="${PROXY_NETWORK_SERVICE:-Wi-Fi}"
 PROXY_HTTP_URL="http://${PROXY_HOST}:${PROXY_PORT}"
-PROXY_SOCKS_URL="socks5://${PROXY_HOST}:${PROXY_PORT}"
 
 # 方便开关代理
 unalias proxy-on proxy-off proxy-status network-check 2>/dev/null
@@ -19,27 +18,35 @@ _proxy_endpoint_ready() {
   nc -z -w 2 "$PROXY_HOST" "$PROXY_PORT" >/dev/null 2>&1
 }
 
+_proxy_route_ready() {
+  curl --proxy "$PROXY_HTTP_URL" -fsS -o /dev/null \
+    --connect-timeout 3 --max-time 8 \
+    https://www.google.com/generate_204
+}
+
 proxy-on() {
   if ! _proxy_endpoint_ready; then
     echo "Proxy not enabled: ${PROXY_HOST}:${PROXY_PORT} is unavailable"
     return 1
   fi
 
+  if ! _proxy_route_ready; then
+    echo "Proxy not enabled: ${PROXY_HOST}:${PROXY_PORT} cannot reach the internet"
+    return 1
+  fi
+
   export http_proxy="$PROXY_HTTP_URL"
   export https_proxy="$http_proxy"
-  export all_proxy="$PROXY_SOCKS_URL"
   export HTTP_PROXY="$http_proxy"
   export HTTPS_PROXY="$https_proxy"
-  export ALL_PROXY="$all_proxy"
+  export npm_config_proxy="$PROXY_HTTP_URL"
+  export npm_config_https_proxy="$PROXY_HTTP_URL"
 
   networksetup -setwebproxy "$PROXY_NETWORK_SERVICE" "$PROXY_HOST" "$PROXY_PORT"
   networksetup -setsecurewebproxy "$PROXY_NETWORK_SERVICE" "$PROXY_HOST" "$PROXY_PORT"
-  networksetup -setsocksfirewallproxy "$PROXY_NETWORK_SERVICE" "$PROXY_HOST" "$PROXY_PORT"
 
   git config --global http.proxy "$PROXY_HTTP_URL"
   git config --global https.proxy "$PROXY_HTTP_URL"
-  git config --global core.sshCommand \
-    "ssh -o 'ProxyCommand=nc -X 5 -x ${PROXY_HOST}:${PROXY_PORT} %h %p'"
   git config --global http.https://git.linker.cc.proxy ""
   git config --global https.https://git.linker.cc.proxy ""
   git config --global http.https://gitlab.linker.cc.proxy ""
@@ -49,7 +56,8 @@ proxy-on() {
 }
 
 proxy-off() {
-  unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
+  unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY \
+    npm_config_proxy npm_config_https_proxy
 
   networksetup -setwebproxystate "$PROXY_NETWORK_SERVICE" off
   networksetup -setsecurewebproxystate "$PROXY_NETWORK_SERVICE" off
