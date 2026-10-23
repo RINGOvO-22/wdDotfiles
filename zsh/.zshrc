@@ -2,6 +2,11 @@
 # .zshrc — macOS optimized
 # ============================================================
 
+# --- 本地密钥（不纳管，模板见 dotfiles/secrets.example.zsh）---
+if [ -f "$HOME/.secrets.zsh" ]; then
+  source "$HOME/.secrets.zsh"
+fi
+
 # --- 代理配置 (Clash / FlClash) ---
 export no_proxy=localhost,127.*,10.*,172.16.*,172.17.*,172.18.*,172.19.*,172.2*,172.30.*,172.31.*,192.168.*,*.local,*.linker.cc,.linker.cc
 export NO_PROXY=$no_proxy
