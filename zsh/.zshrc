@@ -221,6 +221,10 @@ alias ...='cd ../..'
 alias c='clear'
 alias h='history'
 
+# --- Shell 行为 ---
+# 允许交互式命令行使用 # 行尾注释（zsh 默认关闭，bash 默认开启）
+setopt INTERACTIVE_COMMENTS
+
 # --- 历史记录 ---
 HISTFILE="$HOME/.zsh_history"
 SAVEHIST=100000
@@ -233,8 +237,13 @@ setopt HIST_IGNORE_DUPS
 setopt HIST_IGNORE_SPACE
 setopt HIST_SAVE_NO_DUPS
 
-bindkey "$terminfo[kcuu1]" history-beginning-search-backward-end
-bindkey "$terminfo[kcud1]" history-beginning-search-forward-end
+# terminfo 未定义时（TERM=dumb、部分 IDE/ssh 终端）跳过，避免 "cannot bind to an empty key sequence"
+if [[ -n "${terminfo[kcuu1]}" ]]; then
+  bindkey "${terminfo[kcuu1]}" history-beginning-search-backward-end
+fi
+if [[ -n "${terminfo[kcud1]}" ]]; then
+  bindkey "${terminfo[kcud1]}" history-beginning-search-forward-end
+fi
 
 # --- fnm (Node.js 版本管理) ---
 FNM_PATH="/opt/homebrew/opt/fnm/bin"
