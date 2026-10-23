@@ -276,3 +276,15 @@ if [ -x "$CONDA_HOME/bin/conda" ]; then
   unset __conda_setup
 fi
 # <<< conda initialize <<<
+
+# --- Java ---
+# 默认 JDK 25；JDK_VERSION 可覆盖，指定版本缺失时回退到系统默认最高版本
+JDK_VERSION="${JDK_VERSION:-25}"
+if [[ -x /usr/libexec/java_home ]]; then
+  _java_home="$(/usr/libexec/java_home -v "$JDK_VERSION" 2>/dev/null ||
+                /usr/libexec/java_home 2>/dev/null)"
+  if [[ -n "$_java_home" ]]; then
+    export JAVA_HOME="$_java_home"
+  fi
+  unset _java_home
+fi
