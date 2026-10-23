@@ -226,6 +226,69 @@ alias ...='cd ../..'
 alias c='clear'
 alias h='history'
 
+# --- Colima 环境（Docker Desktop 替代）---
+# 开机后跑一次：启动 VM → 自愈 DNS → 启用 qemu → 重探 builder → 切 context → 自检
+# 背景见 Obsidian: WorkObsidian/docker desktop 切换到 colima.md
+colima-up() {
+  local platforms i
+
+  if colima status >/dev/null 2>&1; then
+    echo "==> colima 已在运行"
+  else
+    echo "==> 启动 colima ..."
+    colima start || return 1
+  fi
+
+  if colima ssh -- sh -c 'getent hosts docker.io >/dev/null 2>&1' 2>/dev/null; then
+    echo "==> VM 内 DNS 正常"
+  else
+    echo "!! VM 内 DNS 异常，重写 resolv.conf ..."
+    colima ssh -- sh -c '
+      sudo rm -f /etc/resolv.conf
+      printf "nameserver 223.5.5.5\nnameserver 119.29.29.29\noptions timeout:2 attempts:3\n" | sudo tee /etc/resolv.conf >/dev/null
+      sudo systemctl restart docker' || return 1
+  fi
+
+  if colima ssh -- sh -c 'grep -q "^enabled" /proc/sys/fs/binfmt_misc/qemu-x86_64 2>/dev/null' 2>/dev/null; then
+    echo "==> qemu-x86_64 已启用"
+  else
+    echo "==> 启用 qemu-x86_64 ..."
+    colima ssh -- sh -c 'echo 1 | sudo tee /proc/sys/fs/binfmt_misc/qemu-x86_64 >/dev/null' || return 1
+  fi
+
+  # builder 在 VM 启动时就完成了平台探测，qemu 后开的话它看不到 amd64，必须重启一次
+  platforms="$(docker buildx inspect multiarch 2>/dev/null | grep -i '^Platforms:' || true)"
+  if [[ "$platforms" != *linux/amd64* ]]; then
+    echo "==> builder 缺 amd64，重启以重新探测 ..."
+    if docker restart buildx_buildkit_multiarch0 >/dev/null 2>&1; then
+      for i in 1 2 3 4 5; do
+        sleep 2
+        platforms="$(docker buildx inspect multiarch 2>/dev/null | grep -i '^Platforms:' || true)"
+        [[ "$platforms" == *linux/amd64* ]] && break
+      done
+    else
+      echo "!! 找不到 buildx_buildkit_multiarch0，需要新建 builder"
+    fi
+  fi
+
+  docker context use colima >/dev/null 2>&1
+  echo "==> context 已切到 colima"
+  echo
+
+  docker info --format '  daemon : {{.ServerVersion}} / {{.OperatingSystem}}'
+  docker info --format '  mirrors: {{json .RegistryConfig.Mirrors}}'
+
+  case "$platforms" in
+    *linux/amd64*)
+      echo "==> buildx : linux/amd64 可用"
+      echo "  $platforms" ;;
+    *)
+      echo "!! buildx : 缺少 linux/amd64，重建 builder："
+      echo '  docker buildx rm multiarch && docker buildx create --name multiarch \'
+      echo '    --driver docker-container --config ~/.docker/buildkitd.toml --use' ;;
+  esac
+}
+
 # --- Shell 行为 ---
 # 允许交互式命令行使用 # 行尾注释（zsh 默认关闭，bash 默认开启）
 setopt INTERACTIVE_COMMENTS
