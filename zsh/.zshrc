@@ -7,7 +7,7 @@ if [ -f "$HOME/.secrets.zsh" ]; then
   source "$HOME/.secrets.zsh"
 fi
 
-# --- 代理配置 (Clash / FlClash) ---
+# --- 代理配置（一云梯 / Clash Verge 共用 7890，同一时间只能开一个）---
 export no_proxy=localhost,127.*,10.*,172.16.*,172.17.*,172.18.*,172.19.*,172.2*,172.30.*,172.31.*,192.168.*,*.local,*.linker.cc,.linker.cc
 export NO_PROXY=$no_proxy
 
@@ -105,12 +105,16 @@ proxy-status() {
   echo "HTTP:  ${git_http_proxy:-Disabled}"
   echo "HTTPS: ${git_https_proxy:-Disabled}"
   echo "SSH:   ${git_ssh_command:-Disabled}"
+  echo "SSH → GitHub: $(ssh -G github.com 2>/dev/null \
+    | awk '/^proxycommand/{found=1} END{print found ? "socks5-proxy（失败自动直连）" : "direct"}')"
   echo "git.linker.cc:    Direct"
   echo "gitlab.linker.cc: Direct"
 
   echo $'\nLocal proxy endpoint:'
   if _proxy_endpoint_ready; then
     echo "Available at ${PROXY_HOST}:${PROXY_PORT}"
+    echo "Listening process: $(lsof -nP -iTCP:"$PROXY_PORT" -sTCP:LISTEN 2>/dev/null \
+      | awk 'NR>1 {print $1" (pid "$2")"}' | head -n 1)"
   else
     echo "Unavailable at ${PROXY_HOST}:${PROXY_PORT}"
   fi
