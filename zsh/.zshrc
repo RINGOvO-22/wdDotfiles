@@ -227,7 +227,7 @@ alias c='clear'
 alias h='history'
 
 # --- Colima 环境（Docker Desktop 替代）---
-# 开机后跑一次：启动 VM → 自愈 DNS → 启用 qemu → 重探 builder → 切 context → 自检
+# 开机后跑一次：启动 VM → 确认 docker 可达 → 自愈 DNS → 启用 qemu → 重探 builder → 切 context → 自检
 # 背景见 Obsidian: WorkObsidian/docker desktop 切换到 colima.md
 colima-up() {
   local platforms i
@@ -237,6 +237,23 @@ colima-up() {
   else
     echo "==> 启动 colima ..."
     colima start || return 1
+  fi
+
+  # VM 活着不代表宿主机连得上：睡眠/网络切换后 socket 转发会死掉，文件还在但没人监听
+  if ! docker info >/dev/null 2>&1; then
+    echo "!! docker 连不上（socket 转发可能已失效），重启 colima ..."
+    colima restart || return 1
+    for i in 1 2 3 4 5; do
+      sleep 2
+      docker info >/dev/null 2>&1 && break
+    done
+    if ! docker info >/dev/null 2>&1; then
+      echo "!! 重启后仍连不上，手动查："
+      echo "   colima status"
+      echo "   colima ssh -- systemctl status docker"
+      return 1
+    fi
+    echo "==> docker 已恢复"
   fi
 
   if colima ssh -- sh -c 'getent hosts docker.io >/dev/null 2>&1' 2>/dev/null; then
