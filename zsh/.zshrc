@@ -104,7 +104,7 @@ proxy-status() {
   git_ssh_command="$(git config --global --get core.sshCommand 2>/dev/null)"
   echo "HTTP:  ${git_http_proxy:-Disabled}"
   echo "HTTPS: ${git_https_proxy:-Disabled}"
-  echo "SSH:   ${git_ssh_command:-Disabled}"
+  echo "SSH(core.sshCommand): ${git_ssh_command:-Disabled}"
   echo "SSH → GitHub: $(ssh -G github.com 2>/dev/null \
     | awk '/^proxycommand/{found=1} END{print found ? "socks5-proxy（失败自动直连）" : "direct"}')"
   echo "git.linker.cc:    Direct"
