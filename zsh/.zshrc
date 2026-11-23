@@ -7,7 +7,7 @@ if [ -f "$HOME/.secrets.zsh" ]; then
   source "$HOME/.secrets.zsh"
 fi
 
-# --- 代理配置（一云梯 / Clash Verge 共用 7890，同一时间只能开一个）---
+# --- 代理配置（不同代理软件若共用端口如 7890，启动时要确保其余软件完全关闭）---
 export no_proxy=localhost,127.*,10.*,172.16.*,172.17.*,172.18.*,172.19.*,172.2*,172.30.*,172.31.*,192.168.*,*.local,*.linker.cc,.linker.cc
 export NO_PROXY=$no_proxy
 
@@ -17,7 +17,7 @@ PROXY_NETWORK_SERVICE="${PROXY_NETWORK_SERVICE:-Wi-Fi}"
 PROXY_HTTP_URL="http://${PROXY_HOST}:${PROXY_PORT}"
 
 # 方便开关代理
-unalias proxy-on proxy-off proxy-status network-check 2>/dev/null
+unalias proxy-on proxy-off proxy-status 2>/dev/null
 
 _proxy_endpoint_ready() {
   nc -z -w 2 "$PROXY_HOST" "$PROXY_PORT" >/dev/null 2>&1
@@ -29,14 +29,72 @@ _proxy_route_ready() {
     https://www.google.com/generate_204
 }
 
+_proxy_system_enabled() {
+  networksetup -getwebproxy "$PROXY_NETWORK_SERVICE" 2>/dev/null | awk '/^Enabled:/{print $2; exit}'
+}
+
+_proxy_env_first() {
+  local v
+  for v in "$@"; do
+    [ -n "${(P)v}" ] && { printf '%s' "$v"; return 0; }
+  done
+  printf '未设置'
+}
+
+_proxy_tun_active() {
+  route -n get default 2>/dev/null | awk '/interface:/{print $2}' | grep -q '^utun'
+}
+
+# git 代理配置的快照（只管理脚本会改的键）
+_PROXY_MANAGED_KEYS=(
+  http.proxy https.proxy core.sshCommand
+  http.https://git.linker.cc.proxy https.https://git.linker.cc.proxy
+  http.https://gitlab.linker.cc.proxy https.https://gitlab.linker.cc.proxy
+)
+
+_proxy_state_file() {
+  printf '%s/proxy-state.tsv' "${XDG_CACHE_HOME:-$HOME/.cache}"
+}
+
+_proxy_state_save() {
+  local f key val
+  f="$(_proxy_state_file)"
+  mkdir -p "${f:h}"
+  : > "$f"
+  for key in "${_PROXY_MANAGED_KEYS[@]}"; do
+    val="$(git config --global --get "$key" 2>/dev/null)"
+    if [ -z "$val" ]; then
+      printf '%s\t__UNSET__\n' "$key" >> "$f"
+    else
+      printf '%s\t%s\n' "$key" "$val" >> "$f"
+    fi
+  done
+}
+
+_proxy_state_restore() {
+  local f key val
+  f="$(_proxy_state_file)"
+  [ -f "$f" ] || return 1
+  while IFS=$'\t' read -r key val; do
+    [ -z "$key" ] && continue
+    if [ "$val" = "__UNSET__" ]; then
+      git config --global --unset-all "$key" 2>/dev/null || true
+    else
+      git config --global "$key" "$val"
+    fi
+  done < "$f"
+  rm -f "$f"
+  return 0
+}
+
 proxy-on() {
   if ! _proxy_endpoint_ready; then
-    echo "Proxy not enabled: ${PROXY_HOST}:${PROXY_PORT} is unavailable"
+    echo "无法开启：${PROXY_HOST}:${PROXY_PORT} 无人监听 —— 先启动代理软件或核对端口"
     return 1
   fi
 
   if ! _proxy_route_ready; then
-    echo "Proxy not enabled: ${PROXY_HOST}:${PROXY_PORT} cannot reach the internet"
+    echo "无法开启：端口在听，但经代理出网失败 —— 换一个节点再试"
     return 1
   fi
 
@@ -47,8 +105,13 @@ proxy-on() {
   export npm_config_proxy="$PROXY_HTTP_URL"
   export npm_config_https_proxy="$PROXY_HTTP_URL"
 
-  networksetup -setwebproxy "$PROXY_NETWORK_SERVICE" "$PROXY_HOST" "$PROXY_PORT"
-  networksetup -setsecurewebproxy "$PROXY_NETWORK_SERVICE" "$PROXY_HOST" "$PROXY_PORT"
+  rm -f "${XDG_CACHE_HOME:-$HOME/.cache}/ssh-proxy-off"
+
+  if [ "$(_proxy_system_enabled)" != "Yes" ]; then
+    echo "提示：系统代理未开启，浏览器等程序不会走代理（请在代理客户端里打开）"
+  fi
+
+  [ -f "$(_proxy_state_file)" ] || _proxy_state_save
 
   git config --global http.proxy "$PROXY_HTTP_URL"
   git config --global https.proxy "$PROXY_HTTP_URL"
@@ -61,56 +124,49 @@ proxy-on() {
 }
 
 proxy-off() {
+  local flush_dns="" env_set="" sys_on="" git_set=""
+
+  mkdir -p "${XDG_CACHE_HOME:-$HOME/.cache}"
+  touch "${XDG_CACHE_HOME:-$HOME/.cache}/ssh-proxy-off"
+
+  [ "$1" = "--flush-dns" ] && flush_dns=1
+
+  [ -n "${http_proxy}${https_proxy}${HTTP_PROXY}${HTTPS_PROXY}${npm_config_proxy}" ] && env_set=1
+  [ -n "$(git config --global --get http.proxy 2>/dev/null)$(git config --global --get https.proxy 2>/dev/null)" ] && git_set=1
+
   unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY \
     npm_config_proxy npm_config_https_proxy
 
-  networksetup -setwebproxystate "$PROXY_NETWORK_SERVICE" off
-  networksetup -setsecurewebproxystate "$PROXY_NETWORK_SERVICE" off
-  networksetup -setsocksfirewallproxystate "$PROXY_NETWORK_SERVICE" off
+  if [ "$(_proxy_system_enabled)" = "Yes" ]; then
+    echo "提示：系统代理仍开着（由代理客户端控制，本脚本不会关闭）"
+  fi
 
-  git config --global --unset-all http.proxy 2>/dev/null || true
-  git config --global --unset-all https.proxy 2>/dev/null || true
-  git config --global --unset-all core.sshCommand 2>/dev/null || true
-  git config --global http.https://git.linker.cc.proxy ""
-  git config --global https.https://git.linker.cc.proxy ""
-  git config --global http.https://gitlab.linker.cc.proxy ""
-  git config --global https.https://gitlab.linker.cc.proxy ""
+  local git_restored=""
+  _proxy_state_restore && git_restored=1
 
-  echo "Proxy disabled"
+  local cleared=()
+  [ -n "$env_set" ] && cleared+=("环境变量")
+
+  [ -n "$git_restored" ] && [ -n "$git_set" ] && cleared+=("git 代理（已还原）")
+
+  if [ ${#cleared[@]} -eq 0 ]; then
+    echo "Proxy disabled（原本就没有开启）"
+  else
+    echo "Proxy disabled"
+    echo "已清理：${(j: / :)cleared}"
+  fi
+
+  if [ -n "$flush_dns" ]; then
+    sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder
+    echo "DNS 缓存已清"
+  fi
 }
 
 proxy-status() {
-  local terminal_proxy git_http_proxy git_https_proxy git_ssh_command
-  terminal_proxy="$(env | grep -Ei '^(http|https|all)_proxy=' | sort)"
+  local terminal_proxy git_http_proxy git_https_proxy ssh_route \
+    ssh_proxy_host ssh_proxy_port
 
-  echo "Terminal proxy:"
-  if [ -n "$terminal_proxy" ]; then
-    echo "$terminal_proxy"
-  else
-    echo "Disabled"
-  fi
-
-  echo $'\nmacOS system proxy:'
-  echo "HTTP:"
-  networksetup -getwebproxy "$PROXY_NETWORK_SERVICE" | sed -n '1,3p'
-  echo "HTTPS:"
-  networksetup -getsecurewebproxy "$PROXY_NETWORK_SERVICE" | sed -n '1,3p'
-  echo "SOCKS:"
-  networksetup -getsocksfirewallproxy "$PROXY_NETWORK_SERVICE" | sed -n '1,3p'
-
-  echo $'\nGit proxy:'
-  git_http_proxy="$(git config --global --get http.proxy 2>/dev/null)"
-  git_https_proxy="$(git config --global --get https.proxy 2>/dev/null)"
-  git_ssh_command="$(git config --global --get core.sshCommand 2>/dev/null)"
-  echo "HTTP:  ${git_http_proxy:-Disabled}"
-  echo "HTTPS: ${git_https_proxy:-Disabled}"
-  echo "SSH(core.sshCommand): ${git_ssh_command:-Disabled}"
-  echo "SSH → GitHub: $(ssh -G github.com 2>/dev/null \
-    | awk '/^proxycommand/{found=1} END{print found ? "socks5-proxy（失败自动直连）" : "direct"}')"
-  echo "git.linker.cc:    Direct"
-  echo "gitlab.linker.cc: Direct"
-
-  echo $'\nLocal proxy endpoint:'
+  echo "① 内核层 · 端口"
   if _proxy_endpoint_ready; then
     echo "Available at ${PROXY_HOST}:${PROXY_PORT}"
     echo "Listening process: $(lsof -nP -iTCP:"$PROXY_PORT" -sTCP:LISTEN 2>/dev/null \
@@ -119,12 +175,78 @@ proxy-status() {
     echo "Unavailable at ${PROXY_HOST}:${PROXY_PORT}"
   fi
 
-  echo
-  network-check
+  echo $'\n② 系统层 · 系统代理'
+  echo "HTTP:  $(networksetup -getwebproxy "$PROXY_NETWORK_SERVICE" 2>/dev/null | awk '/^Enabled:/{print $2; exit}')"
+  echo "HTTPS: $(networksetup -getsecurewebproxy "$PROXY_NETWORK_SERVICE" 2>/dev/null | awk '/^Enabled:/{print $2; exit}')"
+  echo "SOCKS: $(networksetup -getsocksfirewallproxy "$PROXY_NETWORK_SERVICE" 2>/dev/null | awk '/^Enabled:/{print $2; exit}')"
+
+  echo $'\n③ 程序层 · 终端环境变量（仅当前会话）'
+  terminal_proxy="$(env | grep -Ei '_proxy=' | grep -vEi '^no_proxy=' | sort)"
+  if [ -n "$terminal_proxy" ]; then
+    echo "$terminal_proxy"
+  else
+    echo "Disabled（未设环境变量；命令行工具默认直连，可显式指定代理）"
+  fi
+
+  echo $'\n③ 程序层 · git / ssh（持久配置：~/.gitconfig、~/.ssh/config）'
+  git_http_proxy="$(git config --global --get http.proxy 2>/dev/null)"
+  git_https_proxy="$(git config --global --get https.proxy 2>/dev/null)"
+  echo "HTTP:  ${git_http_proxy:-Disabled}"
+  echo "HTTPS: ${git_https_proxy:-Disabled}"
+  if [ -f "${XDG_CACHE_HOME:-$HOME/.cache}/ssh-proxy-off" ]; then
+    ssh_route="socks5-proxy（proxy-off 状态 → 直连）"
+  elif ssh -G github.com 2>/dev/null | grep -qi '^proxycommand'; then
+    ssh_proxy_host="${SOCKS5_PROXY%%:*}"
+    ssh_proxy_port="${SOCKS5_PROXY##*:}"
+    [ -z "$ssh_proxy_host" ] && ssh_proxy_host="127.0.0.1"
+    [ -z "$ssh_proxy_port" ] && ssh_proxy_port="7890"
+    if nc -z -w 2 "$ssh_proxy_host" "$ssh_proxy_port" >/dev/null 2>&1; then
+      ssh_route="socks5-proxy（${ssh_proxy_host}:${ssh_proxy_port} 可用 → 走代理）"
+    else
+      ssh_route="socks5-proxy（${ssh_proxy_host}:${ssh_proxy_port} 不通 → 直连）"
+    fi
+  else
+    ssh_route="direct（未配置 ProxyCommand）"
+  fi
+  echo "SSH → GitHub: $ssh_route"
+
+  echo $'\n③ 程序层 · 其它工具（仅会话环境变量）'
+  printf 'curl  会话: %s\n' "$(_proxy_env_first http_proxy https_proxy ALL_PROXY)"
+  printf 'npm   会话: %s\n' "$(_proxy_env_first npm_config_proxy npm_config_https_proxy)"
+  printf 'pip   会话: %s\n' "$(_proxy_env_first http_proxy https_proxy)"
+  echo "未检测持久配置（~/.curlrc、~/.npmrc、pip.conf 需自行确认）"
+
+  echo $'\n④ 链路层 · DNS 与连通性'
+  _proxy_network_check
+
+  if _proxy_tun_active; then
+    if [ "$_PROXY_ROUTE_OK" = "1" ]; then
+      echo $'\n结论：TUN 已接管，且节点可达。'
+    elif _proxy_endpoint_ready; then
+      echo $'\n结论：TUN 已接管，但节点不通 —— 换一个节点。'
+      return 1
+    else
+      echo $'\n结论：TUN 已接管；端口未监听，节点未检测。'
+    fi
+  elif ! _proxy_endpoint_ready; then
+    echo $'\n结论：内核没在跑（'"$PROXY_PORT"' 无人监听）。'
+    return 1
+  elif [ "$(_proxy_system_enabled)" != "Yes" ]; then
+    echo $'\n结论：内核在跑，但系统代理未开 —— 浏览器会直连。'
+    return 1
+  elif [ "$_PROXY_ROUTE_OK" != "1" ]; then
+    echo $'\n结论：系统代理已开，但节点不通 —— 换一个节点。'
+    return 1
+  else
+    echo $'\n结论：四层都通。'
+  fi
 }
 
-network-check() {
+_proxy_network_check() {
   local host ip active_dns baidu_direct_code google_direct_code proxy_code
+
+  _PROXY_ROUTE_OK=0
+  _PROXY_DIRECT_OK=0
 
   echo "Active DNS servers:"
   active_dns="$(scutil --dns 2>/dev/null \
@@ -150,6 +272,7 @@ network-check() {
   if baidu_direct_code="$(curl --noproxy '*' -sS -o /dev/null \
     --connect-timeout 3 --max-time 8 -w '%{http_code}' \
     https://www.baidu.com 2>/dev/null)"; then
+    _PROXY_DIRECT_OK=1
     echo "OK      Baidu direct (HTTP $baidu_direct_code)"
   else
     echo "FAILED  Baidu direct"
@@ -160,6 +283,7 @@ network-check() {
       --connect-timeout 3 --max-time 8 -w '%{http_code}' \
       https://www.google.com/generate_204 2>/dev/null)"; then
       if [ "$proxy_code" = "204" ]; then
+        _PROXY_ROUTE_OK=1
         echo "OK      Google through proxy (HTTP 204)"
       else
         echo "REACHED Google through proxy (HTTP $proxy_code)"
@@ -377,3 +501,14 @@ if [[ -x /usr/libexec/java_home ]]; then
   fi
   unset _java_home
 fi
+
+# --- yazi：退出时把当前目录带回 shell ---
+# 用 `y` 启动；`q` 退出会 cd 到浏览到的目录，`Q` 退出不跟随
+function y() {
+  local tmp="$(mktemp -t "yazi-cwd.XXXXXX")" cwd
+  yazi "$@" --cwd-file="$tmp"
+  if cwd="$(cat -- "$tmp")" && [ -n "$cwd" ] && [ "$cwd" != "$PWD" ]; then
+    builtin cd -- "$cwd"
+  fi
+  rm -f -- "$tmp"
+}

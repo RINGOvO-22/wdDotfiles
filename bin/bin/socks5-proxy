@@ -3,7 +3,10 @@
 
 用法:   ProxyCommand ~/bin/socks5-proxy %h %p
 环境:   SOCKS5_PROXY=host:port（默认 127.0.0.1:7890）
+        SOCKS5_PROXY=off  强制直连
         PROTO_DEBUG=1     打开调试输出
+状态:   proxy-off 会创建 ~/.cache/ssh-proxy-off，存在时强制直连；
+        proxy-on 会删除它。状态文件不存在时仍是"先试代理、失败直连"。
 """
 import os
 import socket
@@ -52,9 +55,16 @@ def main():
     host, port = sys.argv[1], int(sys.argv[2])
     spec = os.environ.get("SOCKS5_PROXY", "127.0.0.1:7890")
 
-    # SOCKS5_PROXY=off 可强制直连，用于嫌代理慢或代理异常时临时绕开
-    if spec.strip().lower() in ("off", "none", "direct"):
-        log("proxy disabled by SOCKS5_PROXY=%s -> direct" % spec)
+    state_file = os.path.join(
+        os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
+        "ssh-proxy-off",
+    )
+    forced_off = spec.strip().lower() in ("off", "none", "direct")
+    state_off = os.path.exists(state_file)
+
+    # 两种强制直连：SOCKS5_PROXY=off，或 proxy-off 留下的状态文件
+    if forced_off or state_off:
+        log("proxy disabled (%s) -> direct" % ("SOCKS5_PROXY=off" if forced_off else "proxy-off 状态"))
         sock = socket.create_connection((host, port), timeout=5)
     else:
         px = spec.split(":")
